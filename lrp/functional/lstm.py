@@ -20,7 +20,8 @@ class LstmAll(Function):
         prev_h, prev_c = hx
         b = x.size(0)
         d = bias_hh.size(-1) // 4
-        gates = torch.zeros_like(bias_hh[None].repeat((b,1)))
+
+        gates = torch.zeros((b, bias_hh.size(-1)), dtype=x.dtype, device=x.device)
 
         idx_i = torch.arange(0, d)
         idx_f = torch.arange(d, 2*d)
@@ -28,8 +29,8 @@ class LstmAll(Function):
         idx_o = torch.arange(3*d, 4*d)
         idx_ifo = torch.concat([idx_i, idx_f, idx_o])
 
-        gates_xh = weight_ih[None].repeat((b,1,1)).matmul(     x[:, :, None]).squeeze(-1) # b x 4d
-        gates_hh = weight_hh[None].repeat((b,1,1)).matmul(prev_h[:, :, None]).squeeze(-1) # b x 4d
+        gates_xh = weight_ih[None].type(x.dtype).repeat((b,1,1)).matmul(     x[:, :, None]).squeeze(-1) # b x 4d
+        gates_hh = weight_hh[None].type(x.dtype).repeat((b,1,1)).matmul(prev_h[:, :, None]).squeeze(-1) # b x 4d
         
         gates_pre = gates_xh + gates_hh + bias_ih + bias_hh                 # b x 4d
         gates[:, idx_ifo] = torch.sigmoid(gates_pre[:, idx_ifo])
@@ -38,7 +39,7 @@ class LstmAll(Function):
         c = gates[:, idx_f] * prev_c + gates[:, idx_i] * gates[:, idx_g]    # b x d
         h = gates[:, idx_o] * torch.tanh(c)                                 # b x d
 
-        return gates_pre, gates, c, h
+        return gates_pre, gates, h, c
 
     @staticmethod
     def lrp_linear(hin: Tensor, w: Tensor, b: Tensor, hout: Tensor, Rout: Tensor, bias_nb_units: Tensor, eps: float, bias_factor: float = 0.0, debug=False) -> Tensor:
@@ -68,7 +69,7 @@ class LstmAll(Function):
         message  = (numer/denom) * Rout             # shape (D, M)
         
         Rin      = message.sum(dim=-1)              # shape (D,)
-        
+
         if debug:
             print("local diff: ", Rout.sum() - Rin.sum())
         # Note: 
@@ -88,7 +89,7 @@ class LstmAll(Function):
 
         hx = (h.unsqueeze(0), c.unsqueeze(0)) if not is_batched else (h, c)
 
-        gates_pre, gates, c, h = LstmAll.lstm_cell(
+        gates_pre, gates, h, c = LstmAll.lstm_cell(
             inputs, hx,
             layer.weight_ih, layer.weight_hh,
             layer.bias_ih, layer.bias_hh,
@@ -103,14 +104,17 @@ class LstmAll(Function):
 
     @staticmethod
     def backward(ctx, R_out: Tensor, R_h: Tensor, R_c: Tensor):
+        if (R_h == 0).all():
+            R_h = R_out
+
         device = R_out.device
         
         inputs, h_in, c_in, h_out, c_out, weight_ih, weight_hh, bias_ih, bias_hh, gates_pre, gates, eps, bias_factor = ctx.saved_tensors
 
         d = bias_hh.size(-1) // 4               # hidden size
         e = weight_ih.size(-1)
-        eye = torch.eye(d, device=device)
-        zeros = torch.zeros((d,), device=device)
+        eye = torch.eye(d, device=device, dtype=R_out.dtype)
+        zeros = torch.zeros((d,), device=device, dtype=R_out.dtype)
 
         idx_i = torch.arange(0, d)
         idx_f = torch.arange(d, 2*d)
@@ -119,18 +123,37 @@ class LstmAll(Function):
         bias = bias_ih[idx_g] + bias_hh[idx_g]
         
         # timestep t
-        R_c_out = R_h + R_c
-
-        R_g = LstmAll.lrp_linear(gates[:, idx_i] * gates[:, idx_g], eye.clone(), zeros.clone(), c_out, R_c_out, d, eps, bias_factor)[None]
-
-        R_x = LstmAll.lrp_linear(inputs, weight_ih[idx_g].T, bias, gates_pre[:, idx_g], R_g, d+e, eps, bias_factor)[None]
+        R_c_out = R_c + R_h
         
+        gates_ig = gates[:, idx_i] * gates[:, idx_g]
+        R_g = LstmAll.lrp_linear(gates_ig,
+                                 eye.clone(), zeros.clone(),
+                                 c_out,
+                                 R_c_out,
+                                 d, eps, bias_factor)[None]
+
+        R_x = LstmAll.lrp_linear(inputs,
+                                 weight_ih[idx_g].T,
+                                 bias,
+                                 gates_pre[:, idx_g],
+                                 R_g,
+                                 d+e, eps, bias_factor, debug=False)[None]
+
         # timestep t-1
-        R_c = LstmAll.lrp_linear(gates[:, idx_f] * c_in, eye.clone(), zeros.clone(), c_in, R_c_out, d, eps, bias_factor)[None]
+        R_c_in = LstmAll.lrp_linear(gates[:, idx_f] * c_in,
+                                 eye.clone(), zeros.clone(),
+                                 c_out,
+                                 R_c_out,
+                                 d, eps, bias_factor)[None]
 
-        R_h = LstmAll.lrp_linear(h_in, weight_hh[idx_g].T, bias, gates_pre[:, idx_g], R_g, d+e, eps, bias_factor)[None]
+        R_h_in = LstmAll.lrp_linear(h_in,
+                                    weight_hh[idx_g].T,
+                                    bias,
+                                    gates_pre[:, idx_g],
+                                    R_g,
+                                    d+e, eps, bias_factor)[None]
 
-        return R_x, R_h, R_c, None
+        return R_x, R_h_in, R_c_in, None
         
 
 lstm = {

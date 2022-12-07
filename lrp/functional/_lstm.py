@@ -36,7 +36,6 @@ def lrp_linear(hin, w, b, hout, Rout, bias_nb_units, eps, bias_factor=0.0, debug
     
     message  = (numer/denom) * Rout[na,:]       # shape (D, M)
     Rin      = message.sum(axis=-1)              # shape (D,)
-    # print(Rin.shape, message.shape)
     
     if debug:
         print("local diff: ", Rout.sum() - Rin.sum())
@@ -92,10 +91,10 @@ class LSTM_bidi:
         idx_i, idx_f, idx_g, idx_o = np.arange(0,d), np.arange(d,2*d), np.arange(2*d,3*d), np.arange(3*d,4*d) # indices of gates i,g,f,o separately
           
         # initialize
-        self.gates_xh  = np.zeros((T, 4*d))  
-        self.gates_hh  = np.zeros((T, 4*d)) 
-        self.gates_pre = np.zeros((T, 4*d))  # gates pre-activation
-        self.gates     = np.zeros((T, 4*d))  # gates activation
+        self.gates_xh  = np.zeros((T, 4*d), dtype=self.x.dtype)  
+        self.gates_hh  = np.zeros((T, 4*d), dtype=self.x.dtype) 
+        self.gates_pre = np.zeros((T, 4*d), dtype=self.x.dtype)  # gates pre-activation
+        self.gates     = np.zeros((T, 4*d), dtype=self.x.dtype)  # gates activation
              
         for t in range(T): 
             self.gates_xh[t]     = np.dot(self.Wxh, self.x[t])       
@@ -129,20 +128,41 @@ class LSTM_bidi:
         idx_i, idx_f, idx_g = np.arange(0,d), np.arange(d,2*d), np.arange(2*d,3*d) # indices of gates i,g,f separately
         
         # initialize
-        Rx  = np.zeros(self.x.shape)
+        Rx  = np.zeros(self.x.shape, dtype=self.x.dtype)
         
-        Rh  = np.zeros((T+1, d))
-        Rc  = np.zeros((T+1, d))
-        Rg  = np.zeros((T,   d)) # gate g only
+        Rh  = np.zeros((T+1, d), dtype=self.x.dtype)
+        Rc  = np.zeros((T+1, d), dtype=self.x.dtype)
+        Rg  = np.zeros((T,   d), dtype=self.x.dtype) # gate g only
         
         # format reminder: lrp_linear(hin, w, b, hout, Rout, bias_nb_units, eps, bias_factor)
-        Rh[T-1]  = np.ones((d))
+        Rh[T-1]  = np.ones((d), dtype=self.x.dtype) / 256
         for t in reversed(range(T)):
             Rc[t]   += Rh[t]
+            
+            gates_ig = self.gates[t, idx_i] * self.gates[t, idx_g]
+            Rg[t]    = lrp_linear(gates_ig,
+                                  np.identity(d, dtype=self.x.dtype), np.zeros((d), dtype=self.x.dtype),
+                                  self.c[t],
+                                  Rc[t],
+                                  d, eps, bias_factor, debug=False)
 
-            Rg[t]    = lrp_linear(self.gates[t,idx_i]*self.gates[t,idx_g], np.identity(d), np.zeros((d)), self.c[t], Rc[t], d, eps, bias_factor, debug=False)
-            Rx[t]    = lrp_linear(self.x[t], self.Wxh[idx_g].T, self.bxh[idx_g]+self.bhh[idx_g], self.gates_pre[t,idx_g], Rg[t], d+256, eps, bias_factor, debug=False)
-            Rc[t-1]  = lrp_linear(self.gates[t,idx_f]*self.c[t-1],         np.identity(d), np.zeros((d)), self.c[t], Rc[t], d, eps, bias_factor, debug=False)
-            Rh[t-1]  = lrp_linear(self.h[t-1], self.Whh[idx_g].T, self.bxh[idx_g]+self.bhh[idx_g], self.gates_pre[t,idx_g], Rg[t], d+256, eps, bias_factor, debug=False)
+            Rx[t]    = lrp_linear(self.x[t],
+                                  self.Wxh[idx_g].T,
+                                  self.bxh[idx_g]+self.bhh[idx_g],
+                                  self.gates_pre[t,idx_g],
+                                  Rg[t],
+                                  d+256, eps, bias_factor, debug=False)
+
+            Rc[t-1]  = lrp_linear(self.gates[t,idx_f]*self.c[t-1],
+                                  np.identity(d, dtype=self.x.dtype), np.zeros((d), dtype=self.x.dtype),
+                                  self.c[t],
+                                  Rc[t],
+                                  d, eps, bias_factor, debug=False)
+            Rh[t-1]  = lrp_linear(self.h[t-1],
+                                  self.Whh[idx_g].T,
+                                  self.bxh[idx_g]+self.bhh[idx_g],
+                                  self.gates_pre[t,idx_g],
+                                  Rg[t],
+                                  d+256, eps, bias_factor, debug=False)
                    
         return Rx
