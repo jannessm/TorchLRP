@@ -6,6 +6,8 @@ from torch import Tensor
 from torch.autograd import Function
 from torch import _VF
 
+from .. import trace
+
 class LstmAll(Function):
     
     @staticmethod
@@ -153,6 +155,8 @@ class LstmAll(Function):
                                     R_g,
                                     d+e, eps, bias_factor)[None]
 
+
+        trace.do_trace(R_x)
         return R_x, R_h_in, R_c_in, None
         
 

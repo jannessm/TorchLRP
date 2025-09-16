@@ -1,12 +1,29 @@
 import torch
+from torch import nn
 from .conv       import Conv2d 
 from .linear     import Linear
+from .lstm import LSTM
 from .sequential import Sequential
 
-conversion_table = { 
-        'Linear': Linear,
-        'Conv2d': Conv2d
-    }
+conversion_table = {
+    'Linear': Linear,
+    'LazyLinear': Linear,
+    'Conv2d': Conv2d,
+    'LazyConv2d': Conv2d,
+    'LSTM': LSTM,
+    'Sequential': Sequential
+}
+
+def convert(module: nn.Module):
+    for name, m in module.named_children():
+        class_name = m.__class__.__name__
+        if class_name in conversion_table.keys() and 'torch.nn' in str(m.__class__):
+            try:
+                setattr(module, name, conversion_table[class_name].from_torch(m))
+            except Exception as e:
+                convert(m)
+        else:
+            convert(m)
 
 # # # # # Convert torch.models.vggxx to lrp model
 def convert_vgg(module, modules=None):

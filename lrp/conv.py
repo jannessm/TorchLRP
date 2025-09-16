@@ -25,7 +25,6 @@ class Conv2d(torch.nn.Conv2d):
         bias = conv.bias is not None
 
         module = cls(in_channels, conv.out_channels, conv.kernel_size, conv.stride, conv.padding, conv.dilation, conv.groups, bias=bias, padding_mode=conv.padding_mode)
-
         module.load_state_dict(conv.state_dict())
 
         return module

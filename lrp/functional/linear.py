@@ -23,7 +23,7 @@ def _backward_rho(ctx, relevance_output):
     relevance_input  = F.linear(relevance_output, weight.t(), bias=None)
     relevance_input  = relevance_input * input
 
-    trace.do_trace(relevance_input) 
+    trace.do_trace(relevance_input)
     return relevance_input, None, None
 
 class LinearEpsilon(Function):

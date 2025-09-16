@@ -11,8 +11,11 @@ class Linear(torch.nn.Linear):
 
     @classmethod
     def from_torch(cls, lin):
+        in_feat = lin.weight.shape[1]
+        out_feat = lin.weight.shape[0]
+
         bias = lin.bias is not None
-        module = cls(in_features=lin.in_features, out_features=lin.out_features, bias=bias)
+        module = cls(in_features=in_feat, out_features=out_feat, bias=bias)
         module.load_state_dict(lin.state_dict())
 
         return module

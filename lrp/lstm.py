@@ -30,7 +30,7 @@ class LSTM(torch.nn.LSTM):
 
     def forward(self, input, hidden = None, explain = False, rule = "all", eps = 0.001, bias_factor = 0.0):
         if not explain or rule == 'gradient':
-            return super(nn.LSTM, self).forward(input, hidden)
+            return super().forward(input, hidden)
         
         orig_input = input
         if self.bidirectional:
